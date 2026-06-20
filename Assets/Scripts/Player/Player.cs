@@ -8,6 +8,9 @@ public class Player : MonoBehaviour
   private InputHandler _input;
   private Vector2 _moveInput;
 
+  [Header("Matar o inimigo")]
+  [SerializeField] private GameObject _headCheck;
+
   [Header("Configurações de Movimento")]
   [SerializeField] private float _maxSpeed = 10f;
   [SerializeField] private float _acceleration = 42f;
@@ -168,5 +171,28 @@ public class Player : MonoBehaviour
 
     Gizmos.color = Color.blue;
     if (_wallCheck != null) Gizmos.DrawWireSphere(_wallCheck.position, _groundCheckRadius);
+  }
+
+  private void OnCollisionEnter2D(Collision2D other)
+  {
+    if (other.gameObject.CompareTag("Enemy"))
+    {
+      // 2. Usamos 'other.otherCollider' para descobrir qual collider do PLAYER encostou no inimigo.
+      // Se o collider que tocou nele pertencer ao objeto '_headCheck', o inimigo morre!
+      if (other.otherCollider.gameObject == _headCheck.CompareTag("KillEnemy"))
+
+      {
+        Destroy(other.gameObject);
+
+        // Bônus de Game Feel: Dá um pequeno impulso para cima ao pisar na cabeça do inimigo
+        _rb.linearVelocityY = 0f;
+        _rb.AddForceY(_jumpForce * 0.7f, ForceMode2D.Impulse);
+      }
+      else
+      {
+        // Se tocou no inimigo por qualquer outro lado (corpo, lados), o Player morre
+        Destroy(gameObject);
+      }
+    }
   }
 }
