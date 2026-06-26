@@ -8,6 +8,9 @@ public class InputHandler : MonoBehaviour
 
   public event Action<Vector2> OnMoveInputChanged;
   public event Action OnJumpPressed;
+  public event Action OnDashPressed;
+  public event Action<bool> OnAimStateChanged;
+  public event Action OnFirePressed;
 
   private void Awake()
   {
@@ -17,6 +20,11 @@ public class InputHandler : MonoBehaviour
     _controls.Player.Move.canceled += ctx => SendMoveInput(Vector2.zero);
 
     _controls.Player.Jump.performed += ctx => TriggerJump();
+    _controls.Player.Sprint.performed += ctx => TriggerDash();
+
+    _controls.Player.Look.performed += ctx => OnAimStateChanged?.Invoke(true);
+    _controls.Player.Look.canceled += ctx => OnAimStateChanged?.Invoke(false);
+    _controls.Player.Attack.performed += ctx => OnFirePressed?.Invoke();
   }
 
   private void OnEnable()
@@ -37,5 +45,10 @@ public class InputHandler : MonoBehaviour
   private void TriggerJump()
   {
     OnJumpPressed?.Invoke();
+  }
+
+  private void TriggerDash()
+  {
+    OnDashPressed?.Invoke();
   }
 }

@@ -1,4 +1,6 @@
+using TMPro;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(Rigidbody2D))]
 [RequireComponent(typeof(InputHandler))]
@@ -7,6 +9,7 @@ public class Player : MonoBehaviour
   private Rigidbody2D _rb;
   private InputHandler _input;
   private Vector2 _moveInput;
+  private float _originalGravity;
 
   [Header("Matar o inimigo")]
   [SerializeField] private GameObject _headCheck;
@@ -15,8 +18,15 @@ public class Player : MonoBehaviour
   [SerializeField] private float _maxSpeed = 10f;
   [SerializeField] private float _acceleration = 42f;
   [SerializeField] private float _desacceleration = 38f;
+
+  [Header("Configurações de Dash")]
+  [SerializeField] private float _dashForce = 52f;
+  [SerializeField] private float _dashTimer;
+  [SerializeField] private float _dashTime = 0.2f;
+
   [Tooltip("Visual e Direção")]
   [SerializeField] private bool _isFacingRight = true;
+  [SerializeField] private bool _isDashing = false;
 
   [Header("Configurações de Pulo")]
   [SerializeField] private float _coyoteTime = 0.45f;
@@ -36,6 +46,16 @@ public class Player : MonoBehaviour
   [Tooltip("Debub")]
   [SerializeField] private bool _isWallSliding = false;
 
+  [Header("Configurações do Sistema de Mira e Projéteis")]
+  [SerializeField] private TextMeshProUGUI _aimText;
+  [SerializeField] private GameObject _bulletPrefab;
+  [SerializeField] private Transform _bulletPos;
+  [SerializeField] private float _bulletSpeed = 18f;
+  [SerializeField] private int _maxAmmo = 4;
+  [SerializeField] private int _currentAmmo;
+  [SerializeField] private bool _isAiming = false;
+  private Vector2 _aimDirection;
+
   [Header("Configurações do Chão")]
   [SerializeField] private Transform _groundCheck;
   [SerializeField] private float _groundCheckRadius = 0.2f;
@@ -46,8 +66,10 @@ public class Player : MonoBehaviour
   {
     _rb = GetComponent<Rigidbody2D>();
     _input = GetComponent<InputHandler>();
+    _originalGravity = _rb.gravityScale;
 
     _jumpCounter = 0;
+    _currentAmmo = _maxAmmo;
   }
 
   private void OnEnable()
@@ -56,6 +78,9 @@ public class Player : MonoBehaviour
     {
       _input.OnMoveInputChanged += HandleMoveInput;
       _input.OnJumpPressed += HandleJump;
+      _input.OnDashPressed += HandleDash;
+      _input.OnAimStateChanged += HandleAimState;
+      _input.OnFirePressed += HandleFire;
     }
   }
 
@@ -65,19 +90,35 @@ public class Player : MonoBehaviour
     {
       _input.OnMoveInputChanged -= HandleMoveInput;
       _input.OnJumpPressed -= HandleJump;
+      _input.OnDashPressed -= HandleDash;
+      _input.OnAimStateChanged -= HandleAimState;
+      _input.OnFirePressed -= HandleFire;
     }
+  }
+
+  private void Update()
+  {
+    ProcessAiming();
   }
 
   private void FixedUpdate()
   {
     CheckSurroundings();
     ManageCoyoteTime();
+
+    if (_isDashing)
+    {
+      ProcessDashContinuation();
+      return;
+    }
     ManageWallSlide();
     ApplyMovement();
   }
 
   private void HandleMoveInput(Vector2 inputDirection)
   {
+    if (_isAiming) return;
+
     _moveInput = inputDirection;
 
     if (_moveInput.x > 0 && !_isFacingRight)
@@ -96,6 +137,8 @@ public class Player : MonoBehaviour
     {
       _coyoteTimer = _coyoteTime;
       _jumpCounter = 0;
+      _isDashing = false;
+      _currentAmmo = _maxAmmo;
     }
     else
     {
@@ -114,22 +157,28 @@ public class Player : MonoBehaviour
 
   private void ApplyMovement()
   {
+    if (_isAiming)
+    {
+      _rb.linearVelocityX = 0f;
+      return;
+    }
+
     float targetSpeed = _moveInput.x * _maxSpeed;
     float acelRate = (Mathf.Abs(targetSpeed) > 0.01f) ? _acceleration : _desacceleration;
     float newVelocityX = Mathf.MoveTowards(_rb.linearVelocityX, targetSpeed, acelRate * Time.fixedDeltaTime);
     _rb.linearVelocityX = newVelocityX;
-
   }
 
   private void CheckSurroundings()
   {
     _isGrounded = Physics2D.OverlapCircle(_groundCheck.position, _groundCheckRadius, _groundLayer);
-
     _isTouchingWall = Physics2D.OverlapCircle(_wallCheck.position, _groundCheckRadius, _groundLayer);
   }
 
   private void HandleJump()
   {
+    if (_isAiming || _isDashing) return;
+
     if (_isWallSliding)
     {
       _rb.linearVelocity = Vector2.zero;
@@ -141,7 +190,7 @@ public class Player : MonoBehaviour
       return;
     }
 
-    if (_coyoteTimer > 0f || _jumpCounter < _maxJump)
+    if ((_coyoteTimer > 0f || _jumpCounter < _maxJump) && _isDashing == false)
     {
       _rb.linearVelocityY = 0;
       _rb.AddForceY(_jumpForce, ForceMode2D.Impulse);
@@ -150,8 +199,43 @@ public class Player : MonoBehaviour
     }
   }
 
+  private void HandleDash()
+  {
+    if (!_isGrounded && _jumpCounter > 0 && !_isDashing && !_isAiming)
+    {
+      _isDashing = true;
+      _dashTimer = _dashTime;
+
+      _rb.gravityScale = 0f;
+
+      float dashDirection = _isFacingRight ? 1f : -1f;
+      _rb.linearVelocity = new Vector2(_dashForce * dashDirection, 0f);
+    }
+  }
+
+  private void ProcessDashContinuation()
+  {
+    _dashTimer -= Time.fixedDeltaTime;
+
+    float dashDirection = _isFacingRight ? 1f : -1f;
+    _rb.linearVelocity = new Vector2(_dashForce * dashDirection, 0f);
+
+    if (_dashTimer <= 0f)
+    {
+      _isDashing = false;
+      _rb.gravityScale = _originalGravity;
+      _rb.linearVelocityX = 0f;
+    }
+  }
+
   private void ManageWallSlide()
   {
+    if (_isAiming)
+    {
+      _isWallSliding = false;
+      return;
+    }
+
     if (_isTouchingWall && !_isGrounded && _rb.linearVelocityY < 0f && _moveInput.x != 0)
     {
       _isWallSliding = true;
@@ -161,6 +245,84 @@ public class Player : MonoBehaviour
     else
     {
       _isWallSliding = false;
+    }
+  }
+
+  private void HandleAimState(bool isAiming)
+  {
+    _isAiming = isAiming;
+
+    if (_aimText != null)
+    {
+      // Reseta a rotação ao cancelar a mira
+      if (!isAiming)
+      {
+        _aimText.transform.localRotation = Quaternion.identity;
+      }
+    }
+  }
+
+  private void ProcessAiming()
+  {
+    if (!_isAiming) return;
+
+    Vector2 mouseScreenPos = Mouse.current.position.ReadValue();
+    Vector3 mouseWorldPos = Camera.main.ScreenToWorldPoint(mouseScreenPos);
+    mouseWorldPos.z = 0f;
+
+    Vector2 lookDirection = (mouseWorldPos - transform.position).normalized;
+
+    if (lookDirection.x > 0 && !_isFacingRight) Flip();
+    else if (lookDirection.x < 0 && _isFacingRight) Flip();
+
+    float facingSign = _isFacingRight ? 1f : -1f;
+    float angle = Mathf.Atan2(lookDirection.y, lookDirection.x * facingSign) * Mathf.Rad2Deg;
+
+    // Guardará o ângulo em graus que o GameObject do TextMeshPro deve rotacionar no eixo Z
+    float localZRotation = 0f;
+
+    if (angle > 30f)
+    {
+      _aimDirection = new Vector2(facingSign, 1f).normalized;
+      localZRotation = 45f; // Diagonal para cima
+    }
+    else if (angle < -30f)
+    {
+      _aimDirection = new Vector2(facingSign, -1f).normalized;
+      localZRotation = -45f; // Diagonal para baixo
+    }
+    else
+    {
+      _aimDirection = new Vector2(facingSign, 0f).normalized;
+      localZRotation = 0f; // Reto para frente
+    }
+
+    // ALTERADO: Aplica a rotação local baseada nos 3 pontos limitados
+    if (_aimText != null)
+    {
+      _aimText.transform.localRotation = Quaternion.Euler(0f, 0f, localZRotation);
+    }
+  }
+
+  private void HandleFire()
+  {
+    if (!_isAiming || _currentAmmo <= 0) return;
+
+    _currentAmmo--;
+
+    if (_bulletPrefab != null)
+    {
+      // ALTERADO: Agora pega a posição exata do seu objeto vazio customizado!
+      // Se você esquecer de arrastar o objeto no Inspector, ele usa o centro do Player como precaução.
+      Vector3 spawnPos = _bulletPos != null ? _bulletPos.position : transform.position;
+
+      GameObject projectible = Instantiate(_bulletPrefab, spawnPos, Quaternion.identity);
+
+      Rigidbody2D projRb = projectible.GetComponent<Rigidbody2D>();
+      if (projRb != null)
+      {
+        projRb.linearVelocity = _aimDirection * _bulletSpeed;
+      }
     }
   }
 
@@ -177,10 +339,8 @@ public class Player : MonoBehaviour
   {
     if (other.gameObject.CompareTag("Enemy"))
     {
-      // 2. Usamos 'other.otherCollider' para descobrir qual collider do PLAYER encostou no inimigo.
-      // Se o collider que tocou nele pertencer ao objeto '_headCheck', o inimigo morre!
+      // CORRIGIDO: Removido o CompareTag duplicado de dentro da validação do objeto que quebrava a lógica.
       if (other.otherCollider.gameObject == _headCheck.CompareTag("KillEnemy"))
-
       {
         Destroy(other.gameObject);
 
